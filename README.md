@@ -13,7 +13,7 @@
 
 ```mermaid
 graph TD
-    User((ユーザー)) -->|コマンド !record start| Bot1[メインBot / Client 1]
+    User((ユーザー)) -->|コマンド /record start| Bot1[メインBot / Client 1]
     
     subgraph BotManager [Bot Manager]
         Manager[Manager Logic]
@@ -47,7 +47,7 @@ graph TD
 1. [Discord Developer Portal](https://discord.com/developers/applications)で最大3つのBot（または必要な数）を作成します。
 2. 以下の設定を有効にしてください：
    - **Privileged Gateway Intents**: `GUILD_MESSAGES`, `MESSAGE_CONTENT`, `GUILD_VOICE_STATES`
-3. 各Botをサーバーに招待してください（権限：`View Channels`, `Connect`, `Speak`, `Send Messages`）。
+3. 各Botをサーバーに招待してください（権限：`Bot`,`applications.commands`,`View Channels`, `Connect`, `Speak`, `Send Messages`）。
 
 ### 2. 環境設定
 `.env.example` をコピーして `.env` を作成し、各Botのトークンを記入します。
@@ -61,6 +61,7 @@ cp .env.example .env
 DISCORD_TOKEN_1=your_first_bot_token
 DISCORD_TOKEN_2=your_second_bot_token
 DISCORD_TOKEN_3=your_third_bot_token
+GUOLD_ID==your_server_ID
 ```
 
 ### 3. Dockerで起動
@@ -74,9 +75,9 @@ docker compose up -d --build
 
 メインBot（`DISCORD_TOKEN_1`）に対してメッセージを送信します。
 
-- **録音開始**: `!record start`
+- **録音開始**: `/record start`
   - コマンドを実行したユーザーが参加しているボイスチャンネルの録音を開始します。
-- **録音停止**: `!record stop`
+- **録音停止**: `/record stop`
   - 録音を停止し、ファイルを保存します。
 
 保存されたファイルは `data/recordings/[セッションID]/[ユーザーID].mp3` に出力されます。
