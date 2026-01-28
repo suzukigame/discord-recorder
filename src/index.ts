@@ -47,7 +47,7 @@ mainBot.on('interactionCreate', async (interaction) => {
 
             try {
                 await interaction.deferReply();
-                const sessionId = await manager.startRecording(channel as any);
+                const sessionId = await manager.startRecording(channel as any, interaction.channelId || undefined);
                 await interaction.editReply(`Recording started! Session ID: ${sessionId}`);
             } catch (error: any) {
                 await interaction.editReply(`Failed to start recording: ${error.message}`);

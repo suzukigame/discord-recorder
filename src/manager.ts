@@ -27,8 +27,24 @@ export class BotManager {
                 this.botStatus.set(index, false);
             });
 
-            process.on('unhandledRejection', (error) => {
-                console.error('Unhandled promise rejection:', error);
+            client.on('voiceStateUpdate', (oldState, newState) => {
+                // ボット自身の移動などは無視
+                if (oldState.member?.user.bot) return;
+
+                // 録音中のチャンネルから誰かが退出した場合
+                const channelId = oldState.channelId;
+                if (!channelId || !this.sessions.has(channelId)) return;
+
+                const channel = oldState.channel;
+                if (!channel) return;
+
+                // 残っている「人間」を数える
+                const humanMembers = channel.members.filter(m => !m.user.bot);
+
+                if (humanMembers.size === 0) {
+                    console.log(`[AutoStop] All humans left channel ${channel.name}. Stopping...`);
+                    this.stopRecording(channelId);
+                }
             });
 
             client.login(token);
@@ -36,7 +52,7 @@ export class BotManager {
         });
     }
 
-    public async startRecording(channel: VoiceChannel): Promise<string> {
+    public async startRecording(channel: VoiceChannel, textChannelId?: string): Promise<string> {
         // すでに録音中の場合はエラー
         if (this.sessions.has(channel.id)) {
             throw new Error('This channel is already being recorded.');
@@ -75,7 +91,9 @@ export class BotManager {
                 channel.guild.id,
                 sessionId,
                 connection,
-                freeBotIndex
+                freeBotIndex,
+                textChannelId,
+                this.clients[0]
             );
             session.start();
 
@@ -122,7 +140,7 @@ export class BotManager {
         ].map(command => command.toJSON());
 
         const rest = new REST({ version: '10' }).setToken(token);
-        const clientId = this.clients[0].user?.id;
+        const clientId = this.clients[0]?.user?.id;
 
         if (!clientId) {
             console.error('Could not get Client ID for command registration');

@@ -1,4 +1,5 @@
 import { AudioReceiveStream, VoiceConnection } from '@discordjs/voice';
+import { Client } from 'discord.js';
 import { createWriteStream, mkdirSync } from 'fs';
 import { pipeline } from 'stream';
 import * as prism from 'prism-media';
@@ -13,7 +14,9 @@ export class RecordingSession {
         public guildId: string,
         public sessionId: string,
         private connection: VoiceConnection,
-        public botIndex: number
+        public botIndex: number,
+        public textChannelId?: string,
+        private mainClient?: Client
     ) {
         // チャンネル名からファイルシステムで使えない文字を除去
         const safeChannelName = channelName.replace(/[\\/:*?"<>|]/g, '_');
@@ -72,11 +75,19 @@ export class RecordingSession {
     }
 
     public stop() {
-        this.connection.destroy();
         this.userStreams.forEach((stream) => {
             stream.opusStream.destroy();
             stream.writeStream.end();
         });
         this.userStreams.clear();
+        this.connection.destroy();
+
+        // チャンネルに通知（オートストップ用）
+        if (this.textChannelId && this.mainClient) {
+            const channel = this.mainClient.channels.cache.get(this.textChannelId);
+            if (channel?.isTextBased()) {
+                (channel as any).send(`⏹️ **Auto-Stopped**: Recording in "${this.channelName}" has ended because all members left.`);
+            }
+        }
     }
 }
