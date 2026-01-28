@@ -2,14 +2,14 @@
 
 複数のDiscord Botを使用して、同一サーバー内の複数のボイスチャンネルを同時に録音し、MP3形式で保存するツールです。
 
-## 🌟 特徴
+## 主要機能
 
 - **マルチBot対応**: 最大3つのBot（設定により増減可能）を管理し、複数のチャンネルで同時に録音が可能。
 - **自動割り当て**: 空いているBotを自動的に検出し、録音セッションに割り当てます。
 - **MP3形式保存**: DiscordのOpus音声をリアルタイムでデコードし、FFmpegを使用してMP3形式で保存します。
 - **Docker対応**: Docker環境で簡単にデプロイ・実行が可能です。
 
-## 🏗 アーキテクチャ構成
+## アーキテクチャ構成
 
 ```mermaid
 graph TD
@@ -41,7 +41,7 @@ graph TD
     class Bot1,Bot2,Bot3 bot;
 ```
 
-## 🚀 セットアップ
+## セットアップ
 
 ### 1. Botの準備
 1. [Discord Developer Portal](https://discord.com/developers/applications)で最大3つのBot（または必要な数）を作成します。
@@ -70,7 +70,7 @@ DISCORD_TOKEN_3=your_third_bot_token
 docker compose up -d --build
 ```
 
-## 🎮 使い方
+## 使い方
 
 メインBot（`DISCORD_TOKEN_1`）に対してメッセージを送信します。
 
@@ -81,7 +81,7 @@ docker compose up -d --build
 
 保存されたファイルは `data/recordings/[セッションID]/[ユーザーID].mp3` に出力されます。
 
-## 🛠 技術スタック
+## 技術スタック
 
 - **Runtime**: Node.js 22 (TypeScript)
 - **Library**: discord.js, @discordjs/voice
