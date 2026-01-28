@@ -9,12 +9,15 @@ export class RecordingSession {
 
     constructor(
         public channelId: string,
+        public channelName: string,
         public guildId: string,
         public sessionId: string,
         private connection: VoiceConnection,
         public botIndex: number
     ) {
-        const dir = path.join('data', 'recordings', sessionId);
+        // チャンネル名からファイルシステムで使えない文字を除去
+        const safeChannelName = channelName.replace(/[\\/:*?"<>|]/g, '_');
+        const dir = path.join('data', 'recordings', `${safeChannelName}_${sessionId}`);
         mkdirSync(dir, { recursive: true });
     }
 
@@ -33,7 +36,8 @@ export class RecordingSession {
             mode: 'opus',
         } as any);
 
-        const outPath = path.join('data', 'recordings', this.sessionId, `${userId}.mp3`);
+        const safeChannelName = this.channelName.replace(/[\\/:*?"<>|]/g, '_');
+        const outPath = path.join('data', 'recordings', `${safeChannelName}_${this.sessionId}`, `${userId}.mp3`);
         const writeStream = createWriteStream(outPath);
 
         const pcmStream = new prism.opus.Decoder({ frameSize: 960, channels: 2, rate: 48000 });

@@ -48,7 +48,14 @@ export class BotManager {
         }
 
         const client = this.clients[freeBotIndex];
-        const sessionId = `${Date.now()}_${channel.id}`;
+        const now = new Date();
+        const timestamp = now.getFullYear().toString() +
+            (now.getMonth() + 1).toString().padStart(2, '0') +
+            now.getDate().toString().padStart(2, '0') +
+            now.getHours().toString().padStart(2, '0') +
+            now.getMinutes().toString().padStart(2, '0');
+
+        const sessionId = `${timestamp}`;
 
         const connection = joinVoiceChannel({
             channelId: channel.id,
@@ -63,6 +70,7 @@ export class BotManager {
 
             const session = new RecordingSession(
                 channel.id,
+                channel.name,
                 channel.guild.id,
                 sessionId,
                 connection,
