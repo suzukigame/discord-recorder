@@ -1,6 +1,7 @@
 import { Client, GatewayIntentBits, VoiceChannel } from 'discord.js';
 import { joinVoiceChannel, VoiceConnectionStatus, entersState } from '@discordjs/voice';
 import { RecordingSession } from './recorder.js';
+import { REST, Routes, SlashCommandBuilder } from 'discord.js';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
@@ -98,6 +99,54 @@ export class BotManager {
         // Bot のステータスを解放（空きにする）
         this.botStatus.set(session.botIndex, false);
         console.log(`[BotManager] Bot ${session.botIndex + 1} released from channel ${channelId}`);
+    }
+
+    public async registerCommands(guildId?: string) {
+        const token = process.env.DISCORD_TOKEN_1;
+        if (!token) return;
+
+        const commands = [
+            new SlashCommandBuilder()
+                .setName('record')
+                .setDescription('Recording control')
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('start')
+                        .setDescription('Start recording the voice channel you are in')
+                )
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('stop')
+                        .setDescription('Stop recording and save the files')
+                ),
+        ].map(command => command.toJSON());
+
+        const rest = new REST({ version: '10' }).setToken(token);
+        const clientId = this.clients[0].user?.id;
+
+        if (!clientId) {
+            console.error('Could not get Client ID for command registration');
+            return;
+        }
+
+        try {
+            console.log('Started refreshing application (/) commands.');
+            if (guildId) {
+                await rest.put(
+                    Routes.applicationGuildCommands(clientId, guildId),
+                    { body: commands },
+                );
+                console.log(`Successfully reloaded application (/) commands for guild ${guildId}.`);
+            } else {
+                await rest.put(
+                    Routes.applicationCommands(clientId),
+                    { body: commands },
+                );
+                console.log('Successfully reloaded application (/) commands globally.');
+            }
+        } catch (error) {
+            console.error(error);
+        }
     }
 
     public getMainClient() {

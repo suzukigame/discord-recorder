@@ -54,6 +54,7 @@ export class RecordingSession {
         });
 
         console.log(`[RecordingSession] Initialized streams for user ${userId}. Saving to: ${outPath}`);
+
         try {
             pipeline(opusStream as any, pcmStream, mp3Stream, writeStream, (err) => {
                 if (err) {

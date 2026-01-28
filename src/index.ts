@@ -16,43 +16,65 @@ if (tokens.length === 0) {
 }
 
 const manager = new BotManager(tokens);
-
 const mainBot = manager.getMainClient();
 
-// メインBot (Bot 1) でコマンドを待機
 if (!mainBot) {
     console.error('Main Bot client is not initialized.');
     process.exit(1);
 }
 
-mainBot.on('messageCreate', async (message: Message) => {
-    if (message.author.bot) return;
+mainBot.once('ready', async () => {
+    console.log(`Main Bot logged in as ${mainBot.user?.tag}`);
 
-    if (message.content === '!record start') {
-        const channel = message.member?.voice.channel;
-        if (!channel || channel.type !== ChannelType.GuildVoice) {
-            return message.reply('Please join a voice channel first!');
+    // スラッシュコマンドを登録（GUILD_IDが.envにあればギルド限定、なければグローバル）
+    const guildId = process.env.GUILD_ID;
+    await manager.registerCommands(guildId);
+});
+
+mainBot.on('interactionCreate', async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+
+    if (interaction.commandName === 'record') {
+        const subcommand = interaction.options.getSubcommand();
+
+        if (subcommand === 'start') {
+            const member = interaction.member as any;
+            const channel = member?.voice.channel;
+
+            if (!channel || channel.type !== ChannelType.GuildVoice) {
+                return interaction.reply({ content: 'Please join a voice channel first!', ephemeral: true });
+            }
+
+            try {
+                await interaction.deferReply();
+                const sessionId = await manager.startRecording(channel as any);
+                await interaction.editReply(`Recording started! Session ID: ${sessionId}`);
+            } catch (error: any) {
+                await interaction.editReply(`Failed to start recording: ${error.message}`);
+            }
         }
 
-        try {
-            if (message.channel.isTextBased()) {
-                await (message.channel as TextChannel).send('Starting recording...');
+        if (subcommand === 'stop') {
+            const member = interaction.member as any;
+            const channel = member?.voice.channel;
+
+            if (!channel) {
+                return interaction.reply({ content: 'Please join the voice channel where I am recording.', ephemeral: true });
             }
-            const sessionId = await manager.startRecording(channel as any);
-            message.reply(`Recording started! Session ID: ${sessionId}`);
-        } catch (error: any) {
-            message.reply(`Failed to start recording: ${error.message}`);
+
+            manager.stopRecording(channel.id);
+            await interaction.reply('Recording stopped and saved.');
         }
     }
+});
 
-    if (message.content === '!record stop') {
-        const channel = message.member?.voice.channel;
-        if (!channel) {
-            return message.reply('Please join the voice channel where I am recording.');
-        }
-
-        manager.stopRecording(channel.id);
-        message.reply('Recording stopped and saved.');
+mainBot.on('messageCreate', async (message: Message) => {
+    if (message.author.bot) return;
+    // 従来のコマンドも一応残しておく（必要なければ削除可能）
+    if (message.content === '!record register') {
+        const guildId = message.guildId || undefined;
+        await manager.registerCommands(guildId);
+        message.reply('Slash commands registered!');
     }
 });
 
