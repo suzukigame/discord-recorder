@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+
+# Build files
+dist/
+build/
+*.tsbuildinfo
+
+# Data
+data/recordings/
+
+# System files
+.DS_Store
+Thumbs.db
