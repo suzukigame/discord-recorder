@@ -62,8 +62,16 @@ mainBot.on('interactionCreate', async (interaction) => {
                 return interaction.reply({ content: 'Please join the voice channel where I am recording.', ephemeral: true });
             }
 
-            manager.stopRecording(channel.id);
-            await interaction.reply('Recording stopped and saved.');
+            try {
+                // 返答を先に送ってタイムアウト回避
+                await interaction.reply('Recording stop requested...');
+                await manager.stopRecording(channel.id);
+            } catch (error: any) {
+                // エラー時はフォローアップメッセージを送る
+                if (interaction.channel?.isTextBased()) {
+                    await (interaction.channel as any).send(`Error saving recording: ${error.message}`);
+                }
+            }
         }
     }
 });
