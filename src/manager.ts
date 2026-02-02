@@ -29,7 +29,17 @@ export class BotManager {
             });
 
             client.on('voiceStateUpdate', async (oldState, newState) => {
-                // ボット自身の移動などは無視
+                // ボット自身の移動検知
+                if (oldState.member?.user.id === client.user?.id) {
+                    // 切断された場合（新しいチャンネルがない）
+                    if (!newState.channelId && oldState.channelId) {
+                        console.log(`[AutoStop] Bot ${index + 1} disconnected from ${oldState.channelId}. Stopping session.`);
+                        this.stopRecording(oldState.channelId);
+                    }
+                    return;
+                }
+
+                // 他のボットの移動は無視
                 if (oldState.member?.user.bot) return;
 
                 // 録音中のチャンネルから誰かが退出した場合
@@ -38,19 +48,15 @@ export class BotManager {
 
                 // デバッグログ: 退出イベント検知
                 if (this.sessions.has(channelId)) {
-                    console.log(`[AutoStop Debug] User left ${oldState.channel?.name} (${channelId}). Bot index: ${index}`);
+                    // console.log(`[AutoStop Debug] User left ${oldState.channel?.name} (${channelId}). Bot index: ${index}`);
                 } else {
                     return;
                 }
 
                 // セッションに関連付けられたチャンネルを取得
-                // 注: oldState.channel はキャッシュの状態によっては不完全な場合があるため、明示的にMain Clientからfetchする
+                // 重要: このBotが担当しているセッションなので、このBotのclientを使う
                 try {
-                    // 全ての判定はメインクライアント(clients[0])の視点で行うことで整合性を保つ
-                    const mainClient = this.clients[0];
-                    if (!mainClient) return;
-
-                    const channel = await mainClient.channels.fetch(channelId);
+                    const channel = await client.channels.fetch(channelId);
                     if (!channel || channel.type !== 2) return; // 2 = GuildVoice
 
                     // 残っている「人間」を数える
@@ -88,13 +94,20 @@ export class BotManager {
     }
 
     private async checkEmptyChannels() {
-        const mainClient = this.clients[0];
-        if (!mainClient) return;
+        // sessionsのエントリをコピーして反復処理し、Map変更時の影響を避ける
+        const activeSessions = Array.from(this.sessions.entries());
 
-        for (const [channelId, session] of this.sessions.entries()) {
+        for (const [channelId, session] of activeSessions) {
             try {
-                const channel = await mainClient.channels.fetch(channelId);
-                if (!channel || channel.type !== 2) continue;
+                // セッションに割り当てられたBotのclientを使用
+                const channel = await session.botClient.channels.fetch(channelId).catch(() => null);
+
+                // チャンネルが取得できない（削除された等）場合も停止
+                if (!channel || channel.type !== 2) {
+                    console.log(`[AutoStop Polling] Channel ${channelId} accessible check failed. Stopping...`);
+                    this.stopRecording(channelId);
+                    continue;
+                }
 
                 const humanMembers = (channel as VoiceChannel).members.filter(m => !m.user.bot);
 
@@ -178,8 +191,9 @@ export class BotManager {
                 sessionId,
                 connection,
                 freeBotIndex,
+                client,
                 textChannelId,
-                this.clients[0]
+                client // MainClient (通知用) も担当Botにする
             );
             await session.start();
 
@@ -194,9 +208,12 @@ export class BotManager {
     }
 
     public async stopRecording(channelId: string) {
+        // マップから先に削除（アトミック性確保、二重実行防止）
         const session = this.sessions.get(channelId);
+        this.sessions.delete(channelId);
+
         if (!session) {
-            console.log(`[BotManager] No session found for channel ${channelId}, already stopped`);
+            console.log(`[BotManager] No session found for channel ${channelId}, already stopped or stopping.`);
             return;
         }
 
@@ -207,13 +224,13 @@ export class BotManager {
             this.pendingStops.delete(channelId);
         }
 
+        console.log(`[BotManager] Stopping session for ${channelId} (Bot ${session.botIndex + 1})`);
+
         try {
             await session.stop();
         } catch (error) {
             console.error(`[BotManager] Error during session stop:`, error);
         }
-
-        this.sessions.delete(channelId);
 
         // Bot のステータスを解放（空きにする）
         this.botStatus.set(session.botIndex, false);

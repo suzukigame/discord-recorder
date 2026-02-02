@@ -4,6 +4,19 @@ import * as dotenv from 'dotenv';
 
 dotenv.config();
 
+// グローバルエラーハンドラ: DAVEエラーなどでプロセスがクラッシュしないようにする
+process.on('uncaughtException', (error) => {
+    console.error('[CRITICAL] Uncaught Exception:', error);
+    // DAVEエラーの場合は警告のみ表示して続行
+    if (error.message?.includes('Failed to decrypt')) {
+        console.warn('[DAVE] Decryption error detected, but continuing operation...');
+    }
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[CRITICAL] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
 const tokens = [
     process.env.DISCORD_TOKEN_1,
     process.env.DISCORD_TOKEN_2,

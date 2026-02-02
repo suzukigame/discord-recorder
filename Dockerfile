@@ -1,7 +1,7 @@
-FROM node:22-alpine
+FROM node:22
 
 # FFmpegとビルドに必要なツールをインストール
-RUN apk add --no-cache ffmpeg python3 make g++ tzdata
+RUN apt-get update && apt-get install -y ffmpeg python3 make g++ build-essential
 
 WORKDIR /app
 

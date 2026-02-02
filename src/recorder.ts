@@ -1,18 +1,29 @@
 import { AudioReceiveStream, VoiceConnection } from '@discordjs/voice';
 import { Client, VoiceChannel, ChannelType } from 'discord.js';
-import { createWriteStream, mkdirSync, existsSync, statSync, unlinkSync, readdirSync } from 'fs';
+import { createWriteStream, mkdirSync, existsSync, statSync, unlinkSync, readdirSync, renameSync } from 'fs';
 import { pipeline, PassThrough } from 'stream';
 import * as prism from 'prism-media';
 import path from 'path';
 import { exec } from 'child_process';
 import ffmpegPath from 'ffmpeg-static';
 import { promisify } from 'util';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+const { OpusEncoder } = require('@discordjs/opus');
 
 const execAsync = promisify(exec);
 
 export class RecordingSession {
-    private userStreams: Map<string, { opusStream: any, writeStream?: any, filePath?: string }> = new Map();
-    private userOffsets: Map<string, number> = new Map();
+    private userStreams: Map<string, {
+        opusStream: any,
+        writeStream?: any,
+        filePath?: string,
+        totalWrittenBytes: number
+    }> = new Map();
+    // 生成された全ての録音ファイルを追跡するリスト (path -> userId)
+    private savedFiles: { path: string, user: string }[] = [];
+
     private directory: string;
     private sessionStartTime: number;
 
@@ -23,11 +34,11 @@ export class RecordingSession {
         public sessionId: string,
         private connection: VoiceConnection,
         public botIndex: number,
+        public botClient: Client,
         public textChannelId?: string,
         private mainClient?: Client
     ) {
         this.sessionStartTime = Date.now();
-        // チャンネル名からファイルシステムで使えない文字を除去
         const safeChannelName = channelName.replace(/[\\/:*?"<>|]/g, '_');
         this.directory = path.join('data', 'recordings', `${safeChannelName}_${sessionId}`);
         mkdirSync(this.directory, { recursive: true });
@@ -38,7 +49,6 @@ export class RecordingSession {
         try {
             const guild = await this.mainClient.guilds.fetch(this.guildId);
             const member = await guild.members.fetch(userId);
-            // ファイル名として安全な形式にする
             return (member.displayName || member.user.username).replace(/[\\/:*?"<>|]/g, '_');
         } catch (error) {
             console.warn(`[RecordingSession] Could not fetch username for ${userId}:`, error);
@@ -49,7 +59,6 @@ export class RecordingSession {
     public async start() {
         console.log(`[RecordingSession] Starting recording in channel ${this.channelId} (${this.channelName})`);
 
-        // 既存のメンバーをスキャンして登録
         try {
             const channel = await this.mainClient?.channels.fetch(this.channelId);
             if (channel && channel.type === ChannelType.GuildVoice) {
@@ -72,125 +81,165 @@ export class RecordingSession {
     }
 
     private async recordUser(userId: string) {
-        if (this.userStreams.has(userId)) return;
+        if (this.userStreams.has(userId) && this.userStreams.get(userId)?.writeStream) return;
 
-        // プレースホルダーを置いて二重登録を防ぐ
-        this.userStreams.set(userId, { opusStream: null });
-
-        console.log(`[RecordingSession] Setting up listener for user ${userId}`);
+        console.log(`[RecordingSession] Setting up PCM listener for user ${userId}`);
 
         const opusStream = this.connection.receiver.subscribe(userId, {
             mode: 'opus',
         } as any);
 
         const username = await this.getUsername(userId);
-        const fileName = `${username}_${userId}.mp3`;
+        // RAW PCMファイルとして保存 (s16le, 48000Hz, 2ch)
+        const fileName = `${username}_${userId}_${Date.now()}.pcm`;
         const outPath = path.join(this.directory, fileName);
 
-        // データが来るまでファイル作成を待機する
+        console.log(`[RecordingSession] Starting PCM recording for ${username}.`);
+
+        // ファイルリストへの登録は実際にファイルが作成されたときに行う（下記参照）
+
+        const encoder = new OpusEncoder(48000, 2);
+        const BYTES_PER_MS = 192; // 48000 * 2ch * 2bytes / 1000ms
+
         let isFileCreated = false;
-        const pcmStream = new prism.opus.Decoder({ frameSize: 960, channels: 2, rate: 48000 });
-        const mp3Stream = new (prism as any).default.FFmpeg({
-            args: [
-                '-f', 's16le',
-                '-ar', '48000',
-                '-ac', '2',
-                '-i', '-',
-                '-codec:a', 'libmp3lame',
-                '-b:a', '128k',
-                '-f', 'mp3',
-            ],
-        });
+        let totalWrittenBytes = 0;
+        let writeStream: any = null;
 
-        const buffer = new PassThrough();
+        opusStream.on('data', (chunk: Buffer) => {
+            if (!isFileCreated) {
+                if (chunk.length > 0) {
+                    isFileCreated = true;
+                    const elapsedMs = Date.now() - this.sessionStartTime;
+                    console.log(`[RecordingSession] First packet for ${username} at ${elapsedMs}ms`);
 
-        opusStream.on('data', (chunk) => {
-            if (!isFileCreated && chunk.length > 0) {
-                isFileCreated = true;
-                // セッション開始からのオフセットを記録（ミリ秒）
-                const offset = Date.now() - this.sessionStartTime;
-                this.userOffsets.set(userId, offset);
+                    writeStream = createWriteStream(outPath);
+                    // 実際にファイルが作成されたタイミングでsavedFilesに登録
+                    this.savedFiles.push({ path: outPath, user: userId });
+                    this.userStreams.set(userId, {
+                        opusStream,
+                        writeStream,
+                        filePath: outPath,
+                        totalWrittenBytes: 0
+                    });
+                }
+            }
 
-                console.log(`[RecordingSession] Audio received for ${username} at offset ${offset}ms. Creating file: ${fileName}`);
-                const writeStream = createWriteStream(outPath);
+            if (isFileCreated && chunk.length > 0 && writeStream) {
+                // Gap Filling Logic
+                const elapsedMs = Date.now() - this.sessionStartTime;
+                const streamMs = totalWrittenBytes / BYTES_PER_MS;
+                const diffMs = elapsedMs - streamMs;
 
-                this.userStreams.set(userId, { opusStream, writeStream, filePath: outPath });
+                if (diffMs > 20) { // 20ms以上のズレで補完
+                    let missingBytes = Math.floor(diffMs * BYTES_PER_MS);
+                    // 4バイト(stereo s16)の倍数に丸める
+                    missingBytes = missingBytes - (missingBytes % 4);
 
-                pipeline(buffer, pcmStream, mp3Stream, writeStream, (err) => {
-                    if (err) {
-                        console.error(`[RecordingSession] Error in pipeline for ${username}:`, err);
-                    } else {
-                        console.log(`[RecordingSession] Pipeline ended for ${username}`);
+                    if (missingBytes > 0) {
+                        const silence = Buffer.alloc(missingBytes, 0);
+                        writeStream.write(silence);
+                        totalWrittenBytes += missingBytes;
+                        const streamData = this.userStreams.get(userId);
+                        if (streamData) streamData.totalWrittenBytes = totalWrittenBytes;
                     }
-                    this.userStreams.delete(userId);
-                });
+                }
+
+                try {
+                    const pcm = encoder.decode(chunk);
+                    writeStream.write(pcm);
+                    totalWrittenBytes += pcm.length;
+
+                    const streamData = this.userStreams.get(userId);
+                    if (streamData) streamData.totalWrittenBytes = totalWrittenBytes;
+                } catch (e) {
+                    console.error(`[RecordingSession] Opus decode error for ${username}:`, e);
+                }
             }
         });
 
-        opusStream.pipe(buffer);
-        this.userStreams.set(userId, { opusStream });
+        opusStream.on('end', () => {
+            console.log(`[RecordingSession] Opus stream ended for ${username}`);
+            if (writeStream) writeStream.end();
+            this.userStreams.delete(userId);
+        });
+
+        opusStream.on('error', (err: any) => {
+            console.error(`[RecordingSession] Opus stream error for ${username}:`, err);
+        });
+
+        this.userStreams.set(userId, {
+            opusStream,
+            totalWrittenBytes: 0
+        });
     }
 
     public async stop() {
-        console.log(`[RecordingSession] Stopping recording and mixing files...`);
+        console.log(`[RecordingSession] Stopping session and finalizing PCM files...`);
+        const sessionEndTime = Date.now();
+        const durationMs = sessionEndTime - this.sessionStartTime;
+        const BYTES_PER_MS = 192;
+        const targetTotalBytes = Math.floor(durationMs * BYTES_PER_MS);
 
-        const filesToMix: { path: string, offset: number, user: string }[] = [];
+        const finishPromises: Promise<void>[] = [];
 
-        try {
-            // 全てのストリームを閉じる
-            for (const [userId, stream] of this.userStreams.entries()) {
-                // opusStreamの明示的なdestroyは行わず、connection.destroy()に任せる（DAVEネイティブクラッシュ回避のため）
-                /*
-                try {
-                    if (stream.opusStream) stream.opusStream.destroy();
-                } catch (e) {
-                    console.warn(`[RecordingSession] Error destroying opusStream for ${userId}:`, e);
+        // 全てのストリームに対して終了処理
+        for (const [userId, stream] of this.userStreams.entries()) {
+            if (stream.writeStream) {
+                // Tail Padding (尻切れ防止)
+                const currentBytes = stream.totalWrittenBytes;
+                const missingBytes = targetTotalBytes - currentBytes;
+
+                if (missingBytes > 4) { // 少なくとも1フレーム分以上の無音が必要
+                    console.log(`[RecordingSession] Padding last ${Math.floor(missingBytes / BYTES_PER_MS)}ms for user ${userId}`);
+                    const padding = Buffer.alloc(missingBytes - (missingBytes % 4), 0); // 4バイトの倍数に丸める
+                    stream.writeStream.write(padding);
                 }
-                */
 
-                try {
-                    if (stream.writeStream) stream.writeStream.end();
-                } catch (e) {
-                    console.warn(`[RecordingSession] Error ending writeStream for ${userId}:`, e);
-                }
-
-                if (stream.filePath && existsSync(stream.filePath)) {
-                    if (statSync(stream.filePath).size > 100) { // 閾値を100バイトに戻す
-                        filesToMix.push({
-                            path: stream.filePath,
-                            offset: this.userOffsets.get(userId) || 0,
-                            user: userId
-                        });
-                    } else {
-                        try { unlinkSync(stream.filePath); } catch (e) { }
-                    }
-                }
-            }
-        } catch (err) {
-            console.error('[RecordingSession] Critical error during stream cleanup:', err);
-        } finally {
-            this.userStreams.clear();
-            try {
-                this.connection.destroy();
-            } catch (e) {
-                console.error('[RecordingSession] Error destroying connection:', e);
+                const p = new Promise<void>(resolve => {
+                    stream.writeStream.on('finish', resolve);
+                    stream.writeStream.end();
+                });
+                finishPromises.push(p);
             }
         }
 
-        // ファイルの書き込み完了を待機
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // 全ての書き込み完了を待機 (最大10秒)
+        console.log(`[RecordingSession] Waiting for ${finishPromises.length} files to finish writing...`);
+        await Promise.race([
+            Promise.all(finishPromises),
+            new Promise(resolve => setTimeout(resolve, 10000))
+        ]);
+
+        this.userStreams.clear();
+        try {
+            this.connection.destroy();
+        } catch (e) {
+            console.error('[RecordingSession] Error destroying connection:', e);
+        }
+
+        console.log(`[RecordingSession] All PCM files saved. Starting mixing...`);
+
+        // savedFilesの中から、実在する有効なファイルを抽出してミックス
+        const filesToMix: { path: string, user: string }[] = [];
+        for (const fileRec of this.savedFiles) {
+            if (existsSync(fileRec.path)) {
+                if (statSync(fileRec.path).size > 1000) { // 程度あるもの
+                    filesToMix.push(fileRec);
+                } else {
+                    try { unlinkSync(fileRec.path); } catch (e) { }
+                }
+            }
+        }
 
         if (filesToMix.length > 0) {
             const success = await this.mixAudioFiles(filesToMix);
 
-            // 合成に成功したら一時ファイルを削除
             if (success) {
                 console.log(`[RecordingSession] Cleaning up temporary directory: ${this.directory}`);
                 try {
                     for (const f of filesToMix) {
                         if (existsSync(f.path)) unlinkSync(f.path);
                     }
-                    // ディレクトリが空なら削除（readdirSyncで確認）
                     if (readdirSync(this.directory).length === 0) {
                         const { rmdirSync } = await import('fs');
                         rmdirSync(this.directory);
@@ -201,7 +250,6 @@ export class RecordingSession {
             }
         } else {
             console.log('[RecordingSession] No valid audio files to mix.');
-            // 一時ディレクトリが空なら削除
             try {
                 if (existsSync(this.directory) && readdirSync(this.directory).length === 0) {
                     const { rmdirSync } = await import('fs');
@@ -214,7 +262,7 @@ export class RecordingSession {
             const channel = this.mainClient.channels.cache.get(this.textChannelId);
             if (channel?.isTextBased()) {
                 if (filesToMix.length > 0) {
-                    (channel as any).send(`✅ **Recording Finished**: Combined all voices in "${this.channelName}" into a single file.`);
+                    (channel as any).send(`✅ **Recording Finished**: Combined ${filesToMix.length} audio tracks in "${this.channelName}".`);
                 } else {
                     (channel as any).send(`ℹ️ **Recording Finished**: No conversation detected.`);
                 }
@@ -222,10 +270,9 @@ export class RecordingSession {
         }
     }
 
-    private async mixAudioFiles(files: { path: string, offset: number, user: string }[]): Promise<boolean> {
+    private async mixAudioFiles(files: { path: string, user: string }[]): Promise<boolean> {
         const safeChannelName = this.channelName.replace(/[\\/:*?"<>|]/g, '_');
         const outputFileName = `${safeChannelName}_${this.sessionId}_full.mp3`;
-        // data/recordings の直下に保存
         const outputPath = path.resolve('data', 'recordings', outputFileName);
 
         if (!ffmpegPath) {
@@ -233,35 +280,41 @@ export class RecordingSession {
             return false;
         }
 
-        console.log(`[RecordingSession] Mixing ${files.length} files into ${outputPath}`);
+        console.log(`[RecordingSession] Mixing ${files.length} PCM files into ${outputPath}`);
 
+        // 単一ファイルの場合
         if (files.length === 1 && files[0]) {
             const firstFile = files[0];
+            const command = `"${ffmpegPath}" -f s16le -ar 48000 -ac 2 -i "${path.resolve(firstFile.path)}" -acodec libmp3lame -b:a 128k -y "${outputPath}"`;
             try {
-                // cross-platform copy
-                const { copyFileSync } = await import('fs');
-                copyFileSync(firstFile.path, outputPath);
-                console.log(`[RecordingSession] Single file moved to ${outputPath}`);
+                await execAsync(command);
+                console.log(`[RecordingSession] Single file converted to ${outputPath}`);
                 return true;
             } catch (e) {
-                console.error('Failed to copy single file:', e);
+                console.error('Failed to convert single PCM file:', e);
                 return false;
             }
         }
 
-        const inputArgs = files.map(f => `-i "${path.resolve(f.path)}"`).join(' ');
-        const filterComplex = files.map((f, i) => `[${i}:a]adelay=${f.offset}|${f.offset}[a${i}]`).join('; ') +
-            `; ` + files.map((_, i) => `[a${i}]`).join('') +
-            `amix=inputs=${files.length}:duration=longest:dropout_transition=0,volume=${files.length}[out]`;
+        // ファイルはリネームせずそのまま使用
+        // (スペース入りパスでも path.resolve + クォートで対応)
+        const inputArgs = files.map(f => `-f s16le -ar 48000 -ac 2 -i "${path.resolve(f.path)}"`).join(' ');
+
+        // amix + volume調整 + limiter（ピーク抑制）
+        // limiter: 0dBを超えるピークをソフトに抑制
+        const filterComplex = files.map((_: any, i: number) => `[${i}:a]`).join('') +
+            `amix=inputs=${files.length}:duration=longest:dropout_transition=0,volume=${files.length},alimiter=limit=1:attack=5:release=50[out]`;
 
         const command = `"${ffmpegPath}" ${inputArgs} -filter_complex "${filterComplex}" -map "[out]" -acodec libmp3lame -b:a 128k -y "${outputPath}"`;
 
         try {
-            await execAsync(command);
+            const { stdout, stderr } = await execAsync(command);
             console.log(`[RecordingSession] Mixing complete: ${outputPath}`);
             return true;
-        } catch (error) {
+        } catch (error: any) {
             console.error(`[RecordingSession] Mixing failed:`, error);
+            if (error.stdout) console.log(`[RecordingSession] FFmpeg stdout: ${error.stdout}`);
+            if (error.stderr) console.error(`[RecordingSession] FFmpeg stderr: ${error.stderr}`);
             return false;
         }
     }
