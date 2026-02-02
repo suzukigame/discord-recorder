@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+
+# Build files
+dist/
+build/
+*.tsbuildinfo
+src/**/*.js
+src/**/*.d.ts
+src/**/*.map
+
+# Data
+data/recordings/
+
+# Logs
+logs.txt
+*.log
+
+# System files
+.DS_Store
+Thumbs.db

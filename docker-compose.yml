@@ -1,0 +1,10 @@
+services:
+  recorder:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Tokyo
+    volumes:
+      - ./data:/app/data
+    restart: always
