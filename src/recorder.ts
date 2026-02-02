@@ -303,7 +303,7 @@ export class RecordingSession {
         // amix + volume調整 + limiter（ピーク抑制）
         // limiter: 0dBを超えるピークをソフトに抑制
         const filterComplex = files.map((_: any, i: number) => `[${i}:a]`).join('') +
-            `amix=inputs=${files.length}:duration=longest:dropout_transition=0,volume=${files.length},alimiter=limit=1:attack=5:release=50[out]`;
+            `amix=inputs=${files.length}:duration=longest:dropout_transition=0,volume=${files.length * 0.8},alimiter=limit=1:attack=5:release=50[out]`;
 
         const command = `"${ffmpegPath}" ${inputArgs} -filter_complex "${filterComplex}" -map "[out]" -acodec libmp3lame -b:a 256k -y "${outputPath}"`;
 
