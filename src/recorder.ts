@@ -285,7 +285,7 @@ export class RecordingSession {
         // 単一ファイルの場合
         if (files.length === 1 && files[0]) {
             const firstFile = files[0];
-            const command = `"${ffmpegPath}" -f s16le -ar 48000 -ac 2 -i "${path.resolve(firstFile.path)}" -acodec libmp3lame -b:a 128k -y "${outputPath}"`;
+            const command = `"${ffmpegPath}" -f s16le -ar 48000 -ac 2 -i "${path.resolve(firstFile.path)}" -acodec libmp3lame -b:a 256k -y "${outputPath}"`;
             try {
                 await execAsync(command);
                 console.log(`[RecordingSession] Single file converted to ${outputPath}`);
@@ -305,7 +305,7 @@ export class RecordingSession {
         const filterComplex = files.map((_: any, i: number) => `[${i}:a]`).join('') +
             `amix=inputs=${files.length}:duration=longest:dropout_transition=0,volume=${files.length},alimiter=limit=1:attack=5:release=50[out]`;
 
-        const command = `"${ffmpegPath}" ${inputArgs} -filter_complex "${filterComplex}" -map "[out]" -acodec libmp3lame -b:a 128k -y "${outputPath}"`;
+        const command = `"${ffmpegPath}" ${inputArgs} -filter_complex "${filterComplex}" -map "[out]" -acodec libmp3lame -b:a 256k -y "${outputPath}"`;
 
         try {
             const { stdout, stderr } = await execAsync(command);
