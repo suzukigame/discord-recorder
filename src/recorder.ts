@@ -235,14 +235,10 @@ export class RecordingSession {
             const success = await this.mixAudioFiles(filesToMix);
 
             if (success) {
-                console.log(`[RecordingSession] Cleaning up temporary directory: ${this.directory}`);
+                console.log(`[RecordingSession] Mixing successful. Keeping directory: ${this.directory}`);
                 try {
                     for (const f of filesToMix) {
                         if (existsSync(f.path)) unlinkSync(f.path);
-                    }
-                    if (readdirSync(this.directory).length === 0) {
-                        const { rmdirSync } = await import('fs');
-                        rmdirSync(this.directory);
                     }
                 } catch (e) {
                     console.warn('[RecordingSession] Cleanup warning:', e);
@@ -273,7 +269,7 @@ export class RecordingSession {
     private async mixAudioFiles(files: { path: string, user: string }[]): Promise<boolean> {
         const safeChannelName = this.channelName.replace(/[\\/:*?"<>|]/g, '_');
         const outputFileName = `${safeChannelName}_${this.sessionId}_full.mp3`;
-        const outputPath = path.resolve('data', 'recordings', outputFileName);
+        const outputPath = path.join(this.directory, outputFileName);
 
         if (!ffmpegPath) {
             console.error('[RecordingSession] FFmpeg path is not defined. Mixing skipped.');
