@@ -1,8 +1,11 @@
 import { BotManager } from './manager.js';
 import { ChannelType, Message, TextChannel } from 'discord.js';
+import { WebServer } from './server.js';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
+
+const webServer = new WebServer();
 
 // グローバルエラーハンドラ: DAVEエラーなどでプロセスがクラッシュしないようにする
 process.on('uncaughtException', (error) => {
@@ -38,6 +41,9 @@ if (!mainBot) {
 
 mainBot.once('ready', async () => {
     console.log(`Main Bot logged in as ${mainBot.user?.tag}`);
+
+    // ウェブサーバーの起動
+    webServer.start();
 
     // スラッシュコマンドを登録（GUILD_IDが.envにあればギルド限定、なければグローバル）
     const guildId = process.env.GUILD_ID;

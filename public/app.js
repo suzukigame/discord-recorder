@@ -47,6 +47,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     } catch (error) {
         console.error('Error loading recordings:', error);
-        listElement.innerHTML = '<p style="text-align: center; padding: 40px; color: #ff4757;">Failed to load recordings.</p>';
+        listElement.innerHTML = '<p style="text-align: center; padding: 40px; color: #ff4757;">Failed to load recordings. Please try again later.</p>';
     }
 });
