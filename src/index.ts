@@ -1,13 +1,20 @@
 import { BotManager } from './manager.js';
-import { WebServer } from './server.js';
-import { ChannelType, Message } from 'discord.js';
+import { ChannelType, Message, TextChannel } from 'discord.js';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
 
-// グローバルエラーハンドラ
+// グローバルエラーハンドラ: DAVEエラーなどでプロセスがクラッシュしないようにする
 process.on('uncaughtException', (error) => {
     console.error('[CRITICAL] Uncaught Exception:', error);
+    // DAVEエラーの場合は警告のみ表示して続行
+    if (error.message?.includes('Failed to decrypt')) {
+        console.warn('[DAVE] Decryption error detected, but continuing operation...');
+    }
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[CRITICAL] Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
 const tokens = [
@@ -29,12 +36,10 @@ if (!mainBot) {
     process.exit(1);
 }
 
-// Webサーバーの起動
-const webServer = new WebServer();
-webServer.start();
-
 mainBot.once('ready', async () => {
     console.log(`Main Bot logged in as ${mainBot.user?.tag}`);
+
+    // スラッシュコマンドを登録（GUILD_IDが.envにあればギルド限定、なければグローバル）
     const guildId = process.env.GUILD_ID;
     await manager.registerCommands(guildId);
 });
@@ -44,12 +49,15 @@ mainBot.on('interactionCreate', async (interaction) => {
 
     if (interaction.commandName === 'record') {
         const subcommand = interaction.options.getSubcommand();
+
         if (subcommand === 'start') {
             const member = interaction.member as any;
             const channel = member?.voice.channel;
+
             if (!channel || channel.type !== ChannelType.GuildVoice) {
                 return interaction.reply({ content: 'Please join a voice channel first!', ephemeral: true });
             }
+
             try {
                 await interaction.deferReply();
                 const sessionId = await manager.startRecording(channel as any, interaction.channelId || undefined);
@@ -58,19 +66,36 @@ mainBot.on('interactionCreate', async (interaction) => {
                 await interaction.editReply(`Failed to start recording: ${error.message}`);
             }
         }
+
         if (subcommand === 'stop') {
             const member = interaction.member as any;
             const channel = member?.voice.channel;
-            if (!channel) return interaction.reply({ content: 'Join the channel first.', ephemeral: true });
+
+            if (!channel) {
+                return interaction.reply({ content: 'Please join the voice channel where I am recording.', ephemeral: true });
+            }
+
             try {
+                // 返答を先に送ってタイムアウト回避
                 await interaction.reply('Recording stop requested...');
                 await manager.stopRecording(channel.id);
             } catch (error: any) {
+                // エラー時はフォローアップメッセージを送る
                 if (interaction.channel?.isTextBased()) {
                     await (interaction.channel as any).send(`Error saving recording: ${error.message}`);
                 }
             }
         }
+    }
+});
+
+mainBot.on('messageCreate', async (message: Message) => {
+    if (message.author.bot) return;
+    // 従来のコマンドも一応残しておく（必要なければ削除可能）
+    if (message.content === '!record register') {
+        const guildId = message.guildId || undefined;
+        await manager.registerCommands(guildId);
+        message.reply('Slash commands registered!');
     }
 });
 
