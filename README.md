@@ -1,90 +1,81 @@
-# Discord Multi-Bot Voice Recorder
+# Discord Voice Recorder with Web Gallery
 
-複数のDiscord Botを使用して、同一サーバー内の複数のボイスチャンネルを同時に録音し、MP3形式で保存するツールです。
+GCP (Google Cloud Platform) 上で動作し、Discord の通話内容を録音・管理できるシステムです。
+複数の Bot を使用した同時録音や、ブラウザからの再生・ダウンロード・削除に対応しています。
 
 ## 主要機能
 
-- **マルチBot対応**: 最大3つのBot（設定により増減可能）を管理し、複数のチャンネルで同時に録音が可能。
-- **自動割り当て**: 空いているBotを自動的に検出し、録音セッションに割り当てます。
-- **MP3形式保存**: DiscordのOpus音声をリアルタイムでデコードし、FFmpegを使用してMP3形式で保存します。
-- **Docker対応**: Docker環境で簡単にデプロイ・実行が可能です。
+- **Web ギャラリー (GUI)**: 録音したファイルをブラウザで一覧表示、再生、ダウンロード、および削除が可能。
+- **データローテーション (自動削除)**: 指定した日数（デフォルト7日）が経過した古い録音を自動でクリーンアップし、ディスク容量を節約。
+- **グローバルスラッシュコマンド**: `/record start`, `/record stop` で簡単に録音をコントロール。
+- **マルチ Bot 対応**: 最大3つの Bot を管理し、複数のボイスチャンネルを同時に録音可能。
+- **Docker 運用**: GCP VM (e2-micro 等) 上の Docker 環境で安定して動作。
 
 ## アーキテクチャ構成
 
 ```mermaid
 graph TD
-    User((ユーザー)) -->|コマンド /record start| Bot1[メインBot / Client 1]
+    User((ユーザー)) -->|/record| Discord[Discord API]
+    Discord -->|連携| BotManager[Bot Manager / Node.js]
     
-    subgraph BotManager [Bot Manager]
-        Manager[Manager Logic]
-        Manager -->|管理| Bot1
-        Manager -->|管理| Bot2[サブBot / Client 2]
-        Manager -->|管理| Bot3[サブBot / Client 3]
-        
-        SessionMap{Session Map}
-        Manager -.-> SessionMap
+    subgraph VM [GCP VM Instance]
+        subgraph Docker [Docker Containers]
+            BotManager -->|録音処理| RecSession[Recording Session]
+            RecSession -->|MP3保存| Storage[(Storage: data/recordings/)]
+            WebServer[Express Web Server] -->|配信/管理| Storage
+        end
     end
     
-    Bot1 -->|録音開始要求| Manager
-    Manager -->|Bot割り当て| RecordingSession[Recording Session]
-    
-    subgraph StreamProcessing [音声処理パイプライン]
-        Discord((Discord Voice)) -->|Opus Stream| Receiver[Voice Receiver]
-        Receiver -->|Opus Decoder| PCM[PCM Audio]
-        PCM -->|FFmpeg Encoder| MP3[MP3 Encode]
-    end
-    
-    RecordingSession --> StreamProcessing
-    MP3 -->|保存| File[(Storage: data/recordings/)]
-
-    classDef bot fill:#5865F2,color:#fff;
-    class Bot1,Bot2,Bot3 bot;
+    Gallery((Web Browser)) -->|Port 3000| WebServer
+    WebServer -->|GUI操作| User
 ```
 
-## セットアップ
+## セットアップ (GCP VM 向け)
 
-### 1. Botの準備
-1. [Discord Developer Portal](https://discord.com/developers/applications)で最大3つのBot（または必要な数）を作成します。
-2. 以下の設定を有効にしてください：
-   - **Privileged Gateway Intents**: `GUILD_MESSAGES`, `MESSAGE_CONTENT`, `GUILD_VOICE_STATES`
-3. 各Botをサーバーに招待してください（権限：`Bot`,`applications.commands`,`View Channels`, `Connect`, `Speak`, `Send Messages`）。
+### 1. 準備物
+- **GCP インスタンス**: e2-micro (OS: Debian/Ubuntu 推奨), ディスク 30GB (Free Tier 範囲内)。
+- **Discord Bot トークン**: 複数チャンネルを同時録音したい場合は最大3つ用意。
+  - **Intents**: `GUILD_MESSAGES`, `MESSAGE_CONTENT`, `GUILD_VOICE_STATES` を有効化。
 
-### 2. 環境設定
-`.env.example` をコピーして `.env` を作成し、各Botのトークンを記入します。
+### 2. インストール
+VM 上で以下のコマンドを実行します。
 
 ```bash
+git clone https://github.com/suzukigame/discord-recorder.git
+cd discord-recorder
 cp .env.example .env
+# .env を編集してトークンを記入
 ```
 
-`.env` の内容:
+### 3. 設定 (.env)
 ```env
-DISCORD_TOKEN_1=your_first_bot_token
-DISCORD_TOKEN_2=your_second_bot_token
-DISCORD_TOKEN_3=your_third_bot_token
-GUOLD_ID==your_server_ID
+DISCORD_TOKEN_1=your_token_1
+DISCORD_TOKEN_2=your_token_2
+DISCORD_TOKEN_3=your_token_3
+RETENTION_DAYS=7  # 何日分保持するか
+TZ=Asia/Tokyo
 ```
 
-### 3. Dockerで起動
-以下のコマンドを実行して起動します。
-
+### 4. 起動
 ```bash
 docker compose up -d --build
 ```
 
 ## 使い方
 
-メインBot（`DISCORD_TOKEN_1`）に対してメッセージを送信します。
-
+### 録音操作 (Discord)
 - **録音開始**: `/record start`
-  - コマンドを実行したユーザーが参加しているボイスチャンネルの録音を開始します。
+  - 実行したユーザーがいるボイスチャンネルを録音開始。
 - **録音停止**: `/record stop`
-  - 録音を停止し、ファイルを保存します。
+  - 録音を終了し、ミックスされた MP3 をウェブギャラリーへ公開。
 
-保存されたファイルは `data/recordings/[セッションID]/[ユーザーID].mp3` に出力されます。
+### 管理操作 (Web GUI)
+ブラウザで `http://[VMの外部IP]:3000/` にアクセスします。
+- **再生/ダウンロード**: リストから対象の録音を確認できます。
+- **削除**: 不要な録音は右側の「削除」ボタンから手動で消去可能です。
 
 ## 技術スタック
-
 - **Runtime**: Node.js 22 (TypeScript)
-- **Library**: discord.js, @discordjs/voice
-- **Audio Processing**: prism-media, FFmpeg
-- **Container**: Docker
+- **Web**: Express, Vanilla JS / CSS (Glassmorphism design)
+- **Audio**: @discordjs/voice, ffmpeg-static
+- **Deployment**: GCP, Docker Compose
