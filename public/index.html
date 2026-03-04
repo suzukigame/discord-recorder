@@ -16,7 +16,7 @@
 <body>
     <div class="glass-container">
         <header>
-            <h1><span class="icon">🎙️</span> Discord Voice Recorder</h1>
+            <h1>Discord Voice Recorder</h1>
             <p class="subtitle">Recorded Audio Sessions</p>
         </header>
 
@@ -45,9 +45,14 @@
                 <audio controls class="audio-player">
                     <source src="" type="audio/mpeg">
                 </audio>
-                <a href="#" class="btn-download" download>
-                    <span class="btn-icon">📥</span> Download
-                </a>
+                <div class="button-group">
+                    <a href="#" class="btn-download" download>
+                        ダウンロード
+                    </a>
+                    <button class="btn-delete" title="削除">
+                        削除
+                    </button>
+                </div>
             </div>
         </div>
     </template>

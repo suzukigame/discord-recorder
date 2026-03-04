@@ -76,6 +76,37 @@ export class WebServer {
                 res.status(404).send('File not found');
             }
         });
+
+        this.app.delete('/api/recordings/:sessionId/:filename', (req: express.Request, res: express.Response) => {
+            const { sessionId, filename } = req.params;
+            if (!sessionId || !filename) {
+                res.status(400).send('Invalid parameters');
+                return;
+            }
+
+            const sessionPath = path.join(RECORDINGS_DIR, sessionId as string);
+            const filePath = path.join(sessionPath, filename as string);
+
+            try {
+                if (fs.existsSync(filePath)) {
+                    fs.unlinkSync(filePath);
+                    console.log(`[WebServer] Deleted file: ${filePath}`);
+
+                    // フォルダが空になったらフォルダも削除
+                    if (fs.readdirSync(sessionPath).length === 0) {
+                        fs.rmdirSync(sessionPath);
+                        console.log(`[WebServer] Deleted empty session directory: ${sessionPath}`);
+                    }
+
+                    res.json({ message: 'Deleted successfully' });
+                } else {
+                    res.status(404).json({ error: 'File not found' });
+                }
+            } catch (error) {
+                console.error('[WebServer] Deletion error:', error);
+                res.status(500).json({ error: 'Internal server error' });
+            }
+        });
     }
 
     public start() {

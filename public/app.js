@@ -42,6 +42,26 @@ document.addEventListener('DOMContentLoaded', async () => {
             audio.querySelector('source').src = rec.url;
             const downloadBtn = clone.querySelector('.btn-download');
             downloadBtn.href = rec.url;
+
+            const deleteBtn = clone.querySelector('.btn-delete');
+            deleteBtn.addEventListener('click', async () => {
+                if (confirm('この録音を削除してもよろしいですか？')) {
+                    try {
+                        const delRes = await fetch(`/api/recordings/${rec.sessionId}/${rec.filename}`, {
+                            method: 'DELETE'
+                        });
+                        if (delRes.ok) {
+                            window.location.reload();
+                        } else {
+                            alert('削除に失敗しました。');
+                        }
+                    } catch (e) {
+                        console.error('Delete error:', e);
+                        alert('エラーが発生しました。');
+                    }
+                }
+            });
+
             listElement.appendChild(clone);
         });
 
