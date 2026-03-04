@@ -11,6 +11,7 @@ export class BotManager {
     private sessions: Map<string, RecordingSession> = new Map(); // channelId -> session
     private botStatus: Map<number, boolean> = new Map(); // index -> isBusy
     private pendingStops: Map<string, NodeJS.Timeout> = new Map(); // channelId -> timeout
+    private recordingsDir: string;
 
     constructor(tokens: string[]) {
         tokens.forEach((token, index) => {
@@ -90,7 +91,57 @@ export class BotManager {
         });
 
         // 定期的にセッション中のチャンネルをチェック（イベントが来ない場合のフォールバック）
+        this.recordingsDir = path.resolve('data', 'recordings');
+
+        // 定期的にセッション中のチャンネルをチェック（イベントが来ない場合のフォールバック）
         setInterval(() => this.checkEmptyChannels(), 10000); // 10秒ごと
+
+        // 古い録音データの自動クリーンアップ（起動時と24時間ごと）
+        this.cleanupOldRecordings();
+        setInterval(() => this.cleanupOldRecordings(), 24 * 60 * 60 * 1000);
+    }
+
+    private async cleanupOldRecordings() {
+        try {
+            const retentionDays = parseInt(process.env.RETENTION_DAYS || '7', 10);
+            if (isNaN(retentionDays) || retentionDays < 0) return;
+
+            console.log(`[Cleanup] Checking for recordings older than ${retentionDays} days in ${this.recordingsDir}...`);
+
+            if (!import('fs').then(fs => fs.existsSync(this.recordingsDir))) {
+                const fs = await import('fs');
+                if (!fs.existsSync(this.recordingsDir)) return;
+            }
+
+            const fs = await import('fs');
+            const items = fs.readdirSync(this.recordingsDir);
+            const now = Date.now();
+            const msPerDay = 24 * 60 * 60 * 1000;
+            let deletedCount = 0;
+
+            for (const item of items) {
+                const fullPath = path.join(this.recordingsDir, item);
+                const stats = fs.statSync(fullPath);
+                const ageMs = now - stats.mtimeMs;
+                const ageDays = ageMs / msPerDay;
+
+                if (ageDays > retentionDays) {
+                    console.log(`[Cleanup] Deleting old recording: ${item} (Age: ${ageDays.toFixed(1)} days)`);
+                    if (stats.isDirectory()) {
+                        fs.rmSync(fullPath, { recursive: true, force: true });
+                    } else {
+                        fs.unlinkSync(fullPath);
+                    }
+                    deletedCount++;
+                }
+            }
+
+            if (deletedCount > 0) {
+                console.log(`[Cleanup] Successfully deleted ${deletedCount} old recordings.`);
+            }
+        } catch (error) {
+            console.error('[Cleanup] Error during automatic cleanup:', error);
+        }
     }
 
     private async checkEmptyChannels() {
