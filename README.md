@@ -1,81 +1,42 @@
-# Discord Voice Recorder with Web Gallery
+# Discord Voice Recorder (SKY-MAGYCC)
 
-GCP (Google Cloud Platform) 上で動作し、Discord の通話内容を録音・管理できるシステムです。
-複数の Bot を使用した同時録音や、ブラウザからの再生・ダウンロード・削除に対応しています。
+Discord のボイスチャンネルを録音し、ブラウザから簡単に再生・ダウンロードできるボットです。
 
-## 主要機能
+## 1. Bot をサーバーにインストールする
 
-- **Web ギャラリー (GUI)**: 録音したファイルをブラウザで一覧表示、再生、ダウンロード、および削除が可能。
-- **データローテーション (自動削除)**: 指定した日数（デフォルト7日）が経過した古い録音を自動でクリーンアップし、ディスク容量を節約。
-- **グローバルスラッシュコマンド**: `/record start`, `/record stop` で簡単に録音をコントロール。
-- **マルチ Bot 対応**: 最大3つの Bot を管理し、複数のボイスチャンネルを同時に録音可能。
-- **Docker 運用**: GCP VM (e2-micro 等) 上の Docker 環境で安定して動作。
+まずは Discord のボットをサーバーに準備しましょう。
 
-## アーキテクチャ構成
+1.  **Bot の作成**: [Discord Developer Portal](https://discord.com/developers/applications) で新しい Application を作成します。
+2.  **インテントの設定**: 「Bot」設定タブで `Privileged Gateway Intents` の以下の 3 つを **ON** にします。
+    - Member Intent / Presence Intent / Message Content Intent
+3.  **サーバーへの招待**: 「OAuth2」->「URL Generator」で以下の権限を選択して URL を作成し、サーバーに招待します。
+    - `bot` + `applications.commands`
+    - 権限: `Administrator` (または必要な権限)
 
-```mermaid
-graph TD
-    User((ユーザー)) -->|/record| Discord[Discord API]
-    Discord -->|連携| BotManager[Bot Manager / Node.js]
-    
-    subgraph VM [GCP VM Instance]
-        subgraph Docker [Docker Containers]
-            BotManager -->|録音処理| RecSession[Recording Session]
-            RecSession -->|MP3保存| Storage[(Storage: data/recordings/)]
-            WebServer[Express Web Server] -->|配信/管理| Storage
-        end
-    end
-    
-    Gallery((Web Browser)) -->|Port 3000| WebServer
-    WebServer -->|GUI操作| User
-```
+## 2. 録音する方法
 
-## セットアップ (GCP VM 向け)
+ボットがサーバーにいれば、スラッシュコマンドですぐに録音を開始できます。
 
-### 1. 準備物
-- **GCP インスタンス**: e2-micro (OS: Debian/Ubuntu 推奨), ディスク 30GB (Free Tier 範囲内)。
-- **Discord Bot トークン**: 複数チャンネルを同時録音したい場合は最大3つ用意。
-  - **Intents**: `GUILD_MESSAGES`, `MESSAGE_CONTENT`, `GUILD_VOICE_STATES` を有効化。
+- **録音を開始する**: 自分がボイスチャンネルに入った状態で、どこかのテキストチャンネルで以下を打ちます。
+  ```text
+  /record start
+  ```
+- **録音を終了する**: 録音を止めたいときは以下を打ちます。
+  ```text
+  /record stop
+  ```
+  ※ 録音終了後、ボットが自動で音声を合成して保存します。
 
-### 2. インストール
-VM 上で以下のコマンドを実行します。
+## 3. 録音データをダウンロードする
 
-```bash
-git clone https://github.com/suzukigame/discord-recorder.git
-cd discord-recorder
-cp .env.example .env
-# .env を編集してトークンを記入
-```
+録音したデータは、専用のウェブ画面から確認・ダウンロードできます。
 
-### 3. 設定 (.env)
-```env
-DISCORD_TOKEN_1=your_token_1
-DISCORD_TOKEN_2=your_token_2
-DISCORD_TOKEN_3=your_token_3
-RETENTION_DAYS=7  # 何日分保持するか
-TZ=Asia/Tokyo
-```
+1.  **ウェブ画面を開く**: 管理者から共有された URL（例: `http://35.247.18.47:3000/`）をブラウザで開きます。
+2.  **目的のデータを探す**: 録音日時とチャンネル名が表示されたカードが並びます。
+3.  **ダウンロード**: 各カードの右側にある「ダウンロード」ボタンを押すと、MP3 ファイルが保存されます。
+4.  **整理 (削除)**: 不要になったデータは「削除」ボタンから消去できます。
 
-### 4. 起動
-```bash
-docker compose up -d --build
-```
+---
 
-## 使い方
-
-### 録音操作 (Discord)
-- **録音開始**: `/record start`
-  - 実行したユーザーがいるボイスチャンネルを録音開始。
-- **録音停止**: `/record stop`
-  - 録音を終了し、ミックスされた MP3 をウェブギャラリーへ公開。
-
-### 管理操作 (Web GUI)
-ブラウザで `http://[VMの外部IP]:3000/` にアクセスします。
-- **再生/ダウンロード**: リストから対象の録音を確認できます。
-- **削除**: 不要な録音は右側の「削除」ボタンから手動で消去可能です。
-
-## 技術スタック
-- **Runtime**: Node.js 22 (TypeScript)
-- **Web**: Express, Vanilla JS / CSS (Glassmorphism design)
-- **Audio**: @discordjs/voice, ffmpeg-static
-- **Deployment**: GCP, Docker Compose
+### 管理者向け情報
+システム構成やデプロイ方法については [こちら (Architecture Docs)](./docs/ARCHITECTURE.md) をご覧ください。
