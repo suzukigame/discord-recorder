@@ -2,6 +2,7 @@ import { Client, GatewayIntentBits, VoiceChannel } from 'discord.js';
 import { joinVoiceChannel, VoiceConnectionStatus, entersState } from '@discordjs/voice';
 import { RecordingSession } from './recorder.js';
 import { REST, Routes, SlashCommandBuilder } from 'discord.js';
+import path from 'path';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
@@ -87,256 +88,251 @@ export class BotManager {
             });
 
             client.login(token);
-            this.clients.push(client);
-        });
+            // 定期的にセッション中のチャンネルをチェック（イベントが来ない場合のフォールバック）
+            this.recordingsDir = path.resolve('data', 'recordings');
+            setInterval(() => this.checkEmptyChannels(), 10000); // 10秒ごと
 
-        // 定期的にセッション中のチャンネルをチェック（イベントが来ない場合のフォールバック）
-        this.recordingsDir = path.resolve('data', 'recordings');
-
-        // 定期的にセッション中のチャンネルをチェック（イベントが来ない場合のフォールバック）
-        setInterval(() => this.checkEmptyChannels(), 10000); // 10秒ごと
-
-        // 古い録音データの自動クリーンアップ（起動時と24時間ごと）
-        this.cleanupOldRecordings();
-        setInterval(() => this.cleanupOldRecordings(), 24 * 60 * 60 * 1000);
-    }
+            // 古い録音データの自動クリーンアップ（起動時と24時間ごと）
+            this.cleanupOldRecordings();
+            setInterval(() => this.cleanupOldRecordings(), 24 * 60 * 60 * 1000);
+        }
 
     private async cleanupOldRecordings() {
-        try {
-            const retentionDays = parseInt(process.env.RETENTION_DAYS || '7', 10);
-            if (isNaN(retentionDays) || retentionDays < 0) return;
+            try {
+                const retentionDays = parseInt(process.env.RETENTION_DAYS || '7', 10);
+                if(isNaN(retentionDays) || retentionDays < 0) return;
 
-            console.log(`[Cleanup] Checking for recordings older than ${retentionDays} days in ${this.recordingsDir}...`);
+        console.log(`[Cleanup] Checking for recordings older than ${retentionDays} days in ${this.recordingsDir}...`);
 
-            if (!import('fs').then(fs => fs.existsSync(this.recordingsDir))) {
-                const fs = await import('fs');
-                if (!fs.existsSync(this.recordingsDir)) return;
-            }
-
+        if (!import('fs').then(fs => fs.existsSync(this.recordingsDir))) {
             const fs = await import('fs');
-            const items = fs.readdirSync(this.recordingsDir);
-            const now = Date.now();
-            const msPerDay = 24 * 60 * 60 * 1000;
-            let deletedCount = 0;
-
-            for (const item of items) {
-                const fullPath = path.join(this.recordingsDir, item);
-                const stats = fs.statSync(fullPath);
-                const ageMs = now - stats.mtimeMs;
-                const ageDays = ageMs / msPerDay;
-
-                if (ageDays > retentionDays) {
-                    console.log(`[Cleanup] Deleting old recording: ${item} (Age: ${ageDays.toFixed(1)} days)`);
-                    if (stats.isDirectory()) {
-                        fs.rmSync(fullPath, { recursive: true, force: true });
-                    } else {
-                        fs.unlinkSync(fullPath);
-                    }
-                    deletedCount++;
-                }
-            }
-
-            if (deletedCount > 0) {
-                console.log(`[Cleanup] Successfully deleted ${deletedCount} old recordings.`);
-            }
-        } catch (error) {
-            console.error('[Cleanup] Error during automatic cleanup:', error);
+            if (!fs.existsSync(this.recordingsDir)) return;
         }
+
+        const fs = await import('fs');
+        const items = fs.readdirSync(this.recordingsDir);
+        const now = Date.now();
+        const msPerDay = 24 * 60 * 60 * 1000;
+        let deletedCount = 0;
+
+        for (const item of items) {
+            const fullPath = path.join(this.recordingsDir, item);
+            const stats = fs.statSync(fullPath);
+            const ageMs = now - stats.mtimeMs;
+            const ageDays = ageMs / msPerDay;
+
+            if (ageDays > retentionDays) {
+                console.log(`[Cleanup] Deleting old recording: ${item} (Age: ${ageDays.toFixed(1)} days)`);
+                if (stats.isDirectory()) {
+                    fs.rmSync(fullPath, { recursive: true, force: true });
+                } else {
+                    fs.unlinkSync(fullPath);
+                }
+                deletedCount++;
+            }
+        }
+
+        if (deletedCount > 0) {
+            console.log(`[Cleanup] Successfully deleted ${deletedCount} old recordings.`);
+        }
+    } catch(error) {
+        console.error('[Cleanup] Error during automatic cleanup:', error);
     }
+}
 
     private async checkEmptyChannels() {
-        // sessionsのエントリをコピーして反復処理し、Map変更時の影響を避ける
-        const activeSessions = Array.from(this.sessions.entries());
+    // sessionsのエントリをコピーして反復処理し、Map変更時の影響を避ける
+    const activeSessions = Array.from(this.sessions.entries());
 
-        for (const [channelId, session] of activeSessions) {
-            try {
-                // セッションに割り当てられたBotのclientを使用
-                const channel = await session.botClient.channels.fetch(channelId).catch(() => null);
+    for (const [channelId, session] of activeSessions) {
+        try {
+            // セッションに割り当てられたBotのclientを使用
+            const channel = await session.botClient.channels.fetch(channelId).catch(() => null);
 
-                // チャンネルが取得できない（削除された等）場合も停止
-                if (!channel || channel.type !== 2) {
-                    console.log(`[AutoStop Polling] Channel ${channelId} accessible check failed. Stopping...`);
-                    this.stopRecording(channelId);
-                    continue;
-                }
-
-                const humanMembers = (channel as VoiceChannel).members.filter(m => !m.user.bot);
-
-                if (humanMembers.size === 0) {
-                    console.log(`[AutoStop Polling] Detected empty channel ${(channel as VoiceChannel).name}, stopping...`);
-
-                    if (!this.pendingStops.has(channelId)) {
-                        const timeout = setTimeout(() => {
-                            this.pendingStops.delete(channelId);
-                            this.stopRecording(channelId);
-                        }, 1000);
-
-                        this.pendingStops.set(channelId, timeout);
-                    }
-                }
-            } catch (e) {
-                console.error('[AutoStop Polling] Error checking channel:', e);
+            // チャンネルが取得できない（削除された等）場合も停止
+            if (!channel || channel.type !== 2) {
+                console.log(`[AutoStop Polling] Channel ${channelId} accessible check failed. Stopping...`);
+                this.stopRecording(channelId);
+                continue;
             }
+
+            const humanMembers = (channel as VoiceChannel).members.filter(m => !m.user.bot);
+
+            if (humanMembers.size === 0) {
+                console.log(`[AutoStop Polling] Detected empty channel ${(channel as VoiceChannel).name}, stopping...`);
+
+                if (!this.pendingStops.has(channelId)) {
+                    const timeout = setTimeout(() => {
+                        this.pendingStops.delete(channelId);
+                        this.stopRecording(channelId);
+                    }, 1000);
+
+                    this.pendingStops.set(channelId, timeout);
+                }
+            }
+        } catch (e) {
+            console.error('[AutoStop Polling] Error checking channel:', e);
         }
     }
+}
 
-    public async startRecording(channel: VoiceChannel, textChannelId?: string): Promise<string> {
-        // すでに録音中の場合はエラー
-        if (this.sessions.has(channel.id)) {
-            throw new Error('This channel is already being recorded.');
-        }
+    public async startRecording(channel: VoiceChannel, textChannelId ?: string): Promise < string > {
+    // すでに録音中の場合はエラー
+    if(this.sessions.has(channel.id)) {
+    throw new Error('This channel is already being recorded.');
+}
 
-        // チャンネル名に基づいた特定のBotの割り当て試行
-        let freeBotIndex = -1;
-        const channelName = channel.name.toLowerCase();
+// チャンネル名に基づいた特定のBotの割り当て試行
+let freeBotIndex = -1;
+const channelName = channel.name.toLowerCase();
 
-        if (channelName.includes('room a')) {
-            freeBotIndex = 0;
-        } else if (channelName.includes('room b')) {
-            freeBotIndex = 1;
-        } else if (channelName.includes('room c')) {
-            freeBotIndex = 2;
-        }
+if (channelName.includes('room a')) {
+    freeBotIndex = 0;
+} else if (channelName.includes('room b')) {
+    freeBotIndex = 1;
+} else if (channelName.includes('room c')) {
+    freeBotIndex = 2;
+}
 
-        // 指定のBotがビジー、または対象外のチャンネル名の場合は空いているものを探す
-        if (freeBotIndex === -1 || freeBotIndex >= this.clients.length || this.botStatus.get(freeBotIndex)) {
-            // 元々の「空いているものを探す」ロジック（特定の割り当てがビジーな場合や名前が一致しない場合）
-            freeBotIndex = this.clients.findIndex((_, i) => !this.botStatus.get(i));
-        }
+// 指定のBotがビジー、または対象外のチャンネル名の場合は空いているものを探す
+if (freeBotIndex === -1 || freeBotIndex >= this.clients.length || this.botStatus.get(freeBotIndex)) {
+    // 元々の「空いているものを探す」ロジック（特定の割り当てがビジーな場合や名前が一致しない場合）
+    freeBotIndex = this.clients.findIndex((_, i) => !this.botStatus.get(i));
+}
 
-        if (freeBotIndex === -1) {
-            throw new Error('No available bots for recording. (Maximum 3 simultaneous recordings)');
-        }
+if (freeBotIndex === -1) {
+    throw new Error('No available bots for recording. (Maximum 3 simultaneous recordings)');
+}
 
-        const client = this.clients[freeBotIndex];
-        if (!client) {
-            throw new Error('Selected bot client is not initialized.');
-        }
+const client = this.clients[freeBotIndex];
+if (!client) {
+    throw new Error('Selected bot client is not initialized.');
+}
 
-        const now = new Date();
-        const timestamp = now.getFullYear().toString() +
-            (now.getMonth() + 1).toString().padStart(2, '0') +
-            now.getDate().toString().padStart(2, '0') +
-            now.getHours().toString().padStart(2, '0') +
-            now.getMinutes().toString().padStart(2, '0');
+const now = new Date();
+const timestamp = now.getFullYear().toString() +
+    (now.getMonth() + 1).toString().padStart(2, '0') +
+    now.getDate().toString().padStart(2, '0') +
+    now.getHours().toString().padStart(2, '0') +
+    now.getMinutes().toString().padStart(2, '0');
 
-        const sessionId = `${timestamp}`;
+const sessionId = `${timestamp}`;
 
-        const targetGuild = await client.guilds.fetch(channel.guild.id);
-        const connection = joinVoiceChannel({
-            channelId: channel.id,
-            guildId: channel.guild.id,
-            adapterCreator: targetGuild.voiceAdapterCreator as any,
-            selfDeaf: false,
-            selfMute: true,
-            group: client.user?.id || 'default',
-        });
+const targetGuild = await client.guilds.fetch(channel.guild.id);
+const connection = joinVoiceChannel({
+    channelId: channel.id,
+    guildId: channel.guild.id,
+    adapterCreator: targetGuild.voiceAdapterCreator as any,
+    selfDeaf: false,
+    selfMute: true,
+    group: client.user?.id || 'default',
+});
 
-        try {
-            await entersState(connection, VoiceConnectionStatus.Ready, 20e3);
+try {
+    await entersState(connection, VoiceConnectionStatus.Ready, 20e3);
 
-            const session = new RecordingSession(
-                channel.id,
-                channel.name,
-                channel.guild.id,
-                sessionId,
-                connection,
-                freeBotIndex,
-                client,
-                textChannelId,
-                client // MainClient (通知用) も担当Botにする
-            );
-            await session.start();
+    const session = new RecordingSession(
+        channel.id,
+        channel.name,
+        channel.guild.id,
+        sessionId,
+        connection,
+        freeBotIndex,
+        client,
+        textChannelId,
+        client // MainClient (通知用) も担当Botにする
+    );
+    await session.start();
 
-            this.sessions.set(channel.id, session);
-            this.botStatus.set(freeBotIndex, true);
+    this.sessions.set(channel.id, session);
+    this.botStatus.set(freeBotIndex, true);
 
-            return sessionId;
-        } catch (error) {
-            connection.destroy();
-            throw error;
-        }
+    return sessionId;
+} catch (error) {
+    connection.destroy();
+    throw error;
+}
     }
 
     public async stopRecording(channelId: string) {
-        // マップから先に削除（アトミック性確保、二重実行防止）
-        const session = this.sessions.get(channelId);
-        this.sessions.delete(channelId);
+    // マップから先に削除（アトミック性確保、二重実行防止）
+    const session = this.sessions.get(channelId);
+    this.sessions.delete(channelId);
 
-        if (!session) {
-            console.log(`[BotManager] No session found for channel ${channelId}, already stopped or stopping.`);
-            return;
-        }
-
-        // 保留中の自動停止タイマーをクリア
-        const pendingTimeout = this.pendingStops.get(channelId);
-        if (pendingTimeout) {
-            clearTimeout(pendingTimeout);
-            this.pendingStops.delete(channelId);
-        }
-
-        console.log(`[BotManager] Stopping session for ${channelId} (Bot ${session.botIndex + 1})`);
-
-        try {
-            await session.stop();
-        } catch (error) {
-            console.error(`[BotManager] Error during session stop:`, error);
-        }
-
-        // Bot のステータスを解放（空きにする）
-        this.botStatus.set(session.botIndex, false);
-        console.log(`[BotManager] Bot ${session.botIndex + 1} released from channel ${channelId}`);
+    if (!session) {
+        console.log(`[BotManager] No session found for channel ${channelId}, already stopped or stopping.`);
+        return;
     }
 
-    public async registerCommands(guildId?: string) {
-        const token = process.env.DISCORD_TOKEN_1;
-        if (!token) return;
-
-        const commands = [
-            new SlashCommandBuilder()
-                .setName('record')
-                .setDescription('Recording control')
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('start')
-                        .setDescription('Start recording the voice channel you are in')
-                )
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('stop')
-                        .setDescription('Stop recording and save the files')
-                ),
-        ].map(command => command.toJSON());
-
-        const rest = new REST({ version: '10' }).setToken(token);
-        const clientId = this.clients[0]?.user?.id;
-
-        if (!clientId) {
-            console.error('Could not get Client ID for command registration');
-            return;
-        }
-
-        try {
-            console.log('Started refreshing application (/) commands.');
-            if (guildId) {
-                await rest.put(
-                    Routes.applicationGuildCommands(clientId, guildId),
-                    { body: commands },
-                );
-                console.log(`Successfully reloaded application (/) commands for guild ${guildId}.`);
-            } else {
-                await rest.put(
-                    Routes.applicationCommands(clientId),
-                    { body: commands },
-                );
-                console.log('Successfully reloaded application (/) commands globally.');
-            }
-        } catch (error) {
-            console.error(error);
-        }
+    // 保留中の自動停止タイマーをクリア
+    const pendingTimeout = this.pendingStops.get(channelId);
+    if (pendingTimeout) {
+        clearTimeout(pendingTimeout);
+        this.pendingStops.delete(channelId);
     }
+
+    console.log(`[BotManager] Stopping session for ${channelId} (Bot ${session.botIndex + 1})`);
+
+    try {
+        await session.stop();
+    } catch (error) {
+        console.error(`[BotManager] Error during session stop:`, error);
+    }
+
+    // Bot のステータスを解放（空きにする）
+    this.botStatus.set(session.botIndex, false);
+    console.log(`[BotManager] Bot ${session.botIndex + 1} released from channel ${channelId}`);
+}
+
+    public async registerCommands(guildId ?: string) {
+    const token = process.env.DISCORD_TOKEN_1;
+    if (!token) return;
+
+    const commands = [
+        new SlashCommandBuilder()
+            .setName('record')
+            .setDescription('Recording control')
+            .addSubcommand(subcommand =>
+                subcommand
+                    .setName('start')
+                    .setDescription('Start recording the voice channel you are in')
+            )
+            .addSubcommand(subcommand =>
+                subcommand
+                    .setName('stop')
+                    .setDescription('Stop recording and save the files')
+            ),
+    ].map(command => command.toJSON());
+
+    const rest = new REST({ version: '10' }).setToken(token);
+    const clientId = this.clients[0]?.user?.id;
+
+    if (!clientId) {
+        console.error('Could not get Client ID for command registration');
+        return;
+    }
+
+    try {
+        console.log('Started refreshing application (/) commands.');
+        if (guildId) {
+            await rest.put(
+                Routes.applicationGuildCommands(clientId, guildId),
+                { body: commands },
+            );
+            console.log(`Successfully reloaded application (/) commands for guild ${guildId}.`);
+        } else {
+            await rest.put(
+                Routes.applicationCommands(clientId),
+                { body: commands },
+            );
+            console.log('Successfully reloaded application (/) commands globally.');
+        }
+    } catch (error) {
+        console.error(error);
+    }
+}
 
     public getMainClient() {
-        return this.clients[0];
-    }
+    return this.clients[0];
+}
 }
