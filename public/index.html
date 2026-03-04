@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Discord Voice Recorder - Gallery</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Noto+Sans+JP:wght@300;400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="glass-container">
+        <header>
+            <h1><span class="icon">🎙️</span> Discord Voice Recorder</h1>
+            <p class="subtitle">Recorded Audio Sessions</p>
+        </header>
+
+        <main id="recordings-list">
+            <div class="loader">
+                <div class="spinner"></div>
+                <p>Loading sessions...</p>
+            </div>
+        </main>
+
+        <footer>
+            <p>&copy; 2024 Discord Recorder Team</p>
+        </footer>
+    </div>
+
+    <template id="card-template">
+        <div class="card animate-in">
+            <div class="card-info">
+                <h3 class="filename">filename.mp3</h3>
+                <div class="meta">
+                    <span class="date">2024/02/08 18:00</span>
+                    <span class="size">2.4 MB</span>
+                </div>
+            </div>
+            <div class="card-actions">
+                <audio controls class="audio-player">
+                    <source src="" type="audio/mpeg">
+                </audio>
+                <a href="#" class="btn-download" download>
+                    <span class="btn-icon">📥</span> Download
+                </a>
+            </div>
+        </div>
+    </template>
+
+    <script src="app.js"></script>
+</body>
+</html>
