@@ -232,9 +232,6 @@ export class RecordingSession {
         }
 
         if (filesToMix.length > 0) {
-            // 個人別MP3を先に生成（PCM削除前）
-            await this.convertIndividualFiles(filesToMix);
-
             const success = await this.mixAudioFiles(filesToMix);
 
             if (success) {
@@ -265,26 +262,6 @@ export class RecordingSession {
                 } else {
                     (channel as any).send(`ℹ️ **Recording Finished**: No conversation detected.`);
                 }
-            }
-        }
-    }
-
-    private async convertIndividualFiles(files: { path: string, user: string }[]): Promise<void> {
-        if (!ffmpegPath) return;
-
-        console.log(`[RecordingSession] Converting ${files.length} individual PCM files to MP3...`);
-
-        for (const file of files) {
-            // PCMファイル名からユーザー名部分を取得 (username_userId_timestamp.pcm)
-            const baseName = path.basename(file.path, '.pcm');
-            const outputPath = path.join(this.directory, `${baseName}_individual.mp3`);
-            const command = `"${ffmpegPath}" -f s16le -ar 48000 -ac 2 -i "${path.resolve(file.path)}" -acodec libmp3lame -b:a 256k -y "${outputPath}"`;
-
-            try {
-                await execAsync(command);
-                console.log(`[RecordingSession] Individual MP3 saved: ${outputPath}`);
-            } catch (e) {
-                console.error(`[RecordingSession] Failed to convert individual file ${file.path}:`, e);
             }
         }
     }
